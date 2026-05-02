@@ -6,12 +6,14 @@ Usage:
     python pipeline.py --video practice.mp4 [options]
 
 Options:
-    --video         Path to the input video file (required)
-    --hand          Lead wrist to track: "right" (default) or "left"
-    --output_dir    Directory for output clips and plots (default: ./output)
-    --skip_frames   Process every N+1 frames for speed (default: 0 = every frame)
-    --save_clips    Export each swing as a separate MP4 clip
-    --no_plot       Skip generating analysis plots
+    --video            Path to the input video file (required)
+    --hand             Lead wrist to track: "right" (default) or "left"
+    --output_dir       Directory for output clips and plots (default: ./output)
+    --skip_frames      Process every N+1 frames for speed (default: 0 = every frame)
+    --save_clips       Export each swing as a separate MP4 clip
+    --no_plot          Skip generating analysis plots
+    --no_compose       Skip composing the final annotated video
+    --card_duration    Seconds to show each comment card (default: 3.5)
 """
 
 import argparse
@@ -28,6 +30,7 @@ import matplotlib.pyplot as plt
 from pose_extractor import extract_poses, get_wrist_positions
 from swing_segmenter import detect_swings, SwingSegment
 from swing_analyzer import analyze_swing, print_analysis, SwingAnalysis
+from video_composer import compose_video
 
 
 # ── Video clip export ────────────────────────────────────────────────────────
@@ -201,15 +204,17 @@ def run(
     skip_frames: int = 0,
     save_clips: bool = True,
     make_plots: bool = True,
+    make_composed: bool = True,
+    card_duration_sec: float = 3.5,
 ) -> list[SwingAnalysis]:
     os.makedirs(output_dir, exist_ok=True)
 
-    print(f"[1/4] ポーズ抽出中: {video_path}")
+    print(f"[1/5] ポーズ抽出中: {video_path}")
     poses, video_info = extract_poses(video_path, skip_frames=skip_frames)
     fps = video_info["fps"]
     print(f"      {len(poses)} フレーム抽出完了  ({video_info['total_frames']} フレーム中)")
 
-    print("[2/4] スイング区間の検出中...")
+    print("[2/5] スイング区間の検出中...")
     segments = detect_swings(poses, fps=fps, hand=hand)
     print(f"      {len(segments)} スイングを検出しました")
 
@@ -223,7 +228,7 @@ def run(
         plot_speed_timeline(poses, segments, fps, timeline_path, hand=hand)
         print(f"      タイムラインプロット保存: {timeline_path}")
 
-    print("[3/4] 各スイングを解析中...")
+    print("[3/5] 各スイングを解析中...")
     analyses: list[SwingAnalysis] = []
     for seg in segments:
         try:
@@ -238,7 +243,7 @@ def run(
         except Exception as e:
             print(f"      スイング #{seg.swing_id + 1} の解析でエラー: {e}", file=sys.stderr)
 
-    print("\n[4/4] 結果を保存中...")
+    print("\n[4/5] 結果を保存中...")
 
     # JSON report
     report = build_json_report(analyses, video_info)
@@ -247,12 +252,26 @@ def run(
         json.dump(report, f, ensure_ascii=False, indent=2)
     print(f"      JSON レポート: {report_path}")
 
-    # Clip export
+    # Individual clip export
     if save_clips:
         for seg in segments:
             clip_path = os.path.join(output_dir, f"swing_{seg.swing_id + 1:02d}.mp4")
             save_swing_clip(video_path, seg, clip_path)
             print(f"      クリップ保存: {clip_path}")
+
+    # Composed video: comment cards + annotated swings concatenated
+    print("\n[5/5] 合成動画を作成中...")
+    if make_composed and analyses:
+        composed_path = os.path.join(output_dir, "composed_analysis.mp4")
+        compose_video(
+            video_path=video_path,
+            analyses=analyses,
+            output_path=composed_path,
+            fps=fps,
+            card_duration_sec=card_duration_sec,
+        )
+    else:
+        print("      合成動画の作成をスキップしました。")
 
     print("\n解析完了。")
     return analyses
@@ -274,6 +293,10 @@ def main() -> None:
                         help="クリップ保存をスキップ")
     parser.add_argument("--no_plot", action="store_true",
                         help="グラフ生成をスキップ")
+    parser.add_argument("--no_compose", action="store_true",
+                        help="合成動画の作成をスキップ")
+    parser.add_argument("--card_duration", type=float, default=3.5,
+                        help="コメントカードの表示秒数 (デフォルト: 3.5)")
     args = parser.parse_args()
 
     run(
@@ -283,6 +306,8 @@ def main() -> None:
         skip_frames=args.skip_frames,
         save_clips=not args.no_clips,
         make_plots=not args.no_plot,
+        make_composed=not args.no_compose,
+        card_duration_sec=args.card_duration,
     )
 
 
